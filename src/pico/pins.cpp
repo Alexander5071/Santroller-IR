@@ -115,29 +115,139 @@ uint8_t matrix_read(uint8_t pin, uint8_t outPin) {
     return 1;
 }
 
+#define DECODE_JVC
+#define DECODE_KASEIKYO
+#define DECODE_PANASONIC    // alias for DECODE_KASEIKYO
+#define DECODE_LG
+#define DECODE_NEC          // Includes Apple and Onkyo
+#define DECODE_SAMSUNG
+#define DECODE_SONY
+#define DECODE_RC5
+#define DECODE_RC6
+#define DECODE_DISTANCE_WIDTH // Universal decoder for pulse distance width protocols
+#define DECODE_HASH         // special decoder for all protocols
+
+#define EXCLUDE_EXOTIC_PROTOCOLS
+
 #include "IRremote.hpp"
 
 #define IR_PIN 28
 #define HOLD_TIME 100 // milliseconds
 
-#define XBOX_BTN_PIN 0
-#define DPAD_UP_PIN 1
+#define ASOC(a,b) case a: set_pin(b); break;
+
+enum MEDIA_REMOTE_BUTTONS {
+    PLAY_IR_BTN = 0x16,
+    STOP_IR_BTN = 0x19,
+    PAUSE_IR_BTN = 0x18,
+    REWIND_IR_BTN = 0x15,
+    FAST_FORWARD_IR_BTN = 0x14,
+    PREV_IR_BTN = 0x1B,
+    NEXT_IR_BTN = 0x1A,
+    DISPLAY_IR_BTN = 0x4F,
+    TITLE_IR_BTN = 0x51,
+    DVD_MENU_IR_BTN = 0x24,
+    INFO_IR_BTN = 0xF,
+    REC_IR_BTN = 0x17,
+};
+
+enum PICO_BUTTON_PINS {
+    DPAD_LEFT_PIN = 1,
+    DPAD_RIGHT_PIN,
+    DPAD_UP_PIN,
+    DPAD_DOWN_PIN,
+    A_PIN,
+    B_PIN,
+    LEFT_TRIGGER,
+    RIGHT_TRIGGER,
+    OPTIONS_START,
+    X_PIN,
+    Y_PIN
+};
 
 uint32_t ir_pins = 0xFFFFFFFF;
-unsigned long last_press;
+unsigned long last_press[32] = {0};
 
 void setup_IR() {
     IrReceiver.begin(IR_PIN, DISABLE_LED_FEEDBACK);
 }
 
+inline void set_pin(int pin) {
+    ir_pins &= ~((uint32_t)(1) << pin);
+    last_press[pin] = millis();
+}
+
 void check_IR() {
-    if (last_press + HOLD_TIME < millis()) {
-        ir_pins = 0xFFFFFFFF;
-    }
+    unsigned long now = millis();
+    for (uint8_t i = 0; i < 17; ++i) // idk how far to go
+        if (last_press[i] + HOLD_TIME < now) {
+           ir_pins |= (1 << i);
+        }
 
     if (IrReceiver.decode()) {  // Check if the IR receiver has received a signal
-        last_press = millis();
-        ir_pins &= ~((uint32_t)(1) << DPAD_UP_PIN);
+        if (IrReceiver.decodedIRData.address == 0xF4 || IrReceiver.decodedIRData.address == 0x74) // addresses used by the remote
+            switch (IrReceiver.decodedIRData.command)
+            {
+                case PLAY_IR_BTN:
+                    set_pin(A_PIN);
+                    break;
+                case STOP_IR_BTN:
+                    set_pin(B_PIN);
+                    break;
+                case PREV_IR_BTN:
+                    set_pin(DPAD_LEFT_PIN);
+                    break;
+                case NEXT_IR_BTN:
+                    set_pin(DPAD_RIGHT_PIN);
+                    break;
+                case TITLE_IR_BTN:
+                    set_pin(DPAD_UP_PIN);
+                    break;
+                case INFO_IR_BTN:
+                    set_pin(DPAD_DOWN_PIN);
+                    break;
+                case REWIND_IR_BTN:
+                    set_pin(LEFT_TRIGGER);
+                    break;
+                case FAST_FORWARD_IR_BTN:
+                    set_pin(RIGHT_TRIGGER);
+                    break;
+                case DISPLAY_IR_BTN:
+                    set_pin(X_PIN);
+                    break;
+                case PAUSE_IR_BTN:
+                    set_pin(Y_PIN);
+                    break;
+                case DVD_MENU_IR_BTN:
+                    set_pin(OPTIONS_START);
+                    break;
+                
+                default:
+                    break;
+            }
         IrReceiver.resume();  // Prepare the IR receiver to receive the next signal
     }
+}
+
+unsigned long sMillisOfFirstReceive;
+bool sLongPressJustDetected;
+/**
+ * True once we received the consecutive repeats for more than aLongPressDurationMillis milliseconds.
+ * The first frame, which is no repeat, is NOT counted for the duration!
+ * @return true once after the repeated IR command was received for longer than aLongPressDurationMillis milliseconds, false otherwise.
+ */
+bool detectLongPress(uint16_t aLongPressDurationMillis) {
+    if (!sLongPressJustDetected && (IrReceiver.decodedIRData.flags & IRDATA_FLAGS_IS_REPEAT)) {
+        /*
+         * Here the repeat flag is set (which implies, that command is the same as the previous one)
+         */
+        if (millis() - aLongPressDurationMillis > sMillisOfFirstReceive) {
+            sLongPressJustDetected = true; // Long press here
+        }
+    } else {
+        // No repeat here
+        sMillisOfFirstReceive = millis();
+        sLongPressJustDetected = false;
+    }
+    return sLongPressJustDetected; // No long press here
 }
