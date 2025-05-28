@@ -133,6 +133,7 @@ uint8_t matrix_read(uint8_t pin, uint8_t outPin) {
 
 #define IR_PIN 28
 #define HOLD_TIME 100 // milliseconds
+#define BLOCK_REPEAT_TIME 50 // milliseconds
 
 #define ASOC(a,b) case a: set_pin(b); break;
 
@@ -173,8 +174,11 @@ void setup_IR() {
 }
 
 inline void set_pin(int pin) {
-    ir_pins &= ~((uint32_t)(1) << pin);
-    last_press[pin] = millis();
+    unsigned long now = millis();
+    if (last_press[pin] + BLOCK_REPEAT_TIME < now) {
+        ir_pins &= ~((uint32_t)(1) << pin);
+        last_press[pin] = now;
+    }
 }
 
 void check_IR() {
@@ -182,6 +186,7 @@ void check_IR() {
     for (uint8_t i = 0; i < 17; ++i) // idk how far to go
         if (last_press[i] + HOLD_TIME < now) {
            ir_pins |= (1 << i);
+           last_press[i] = 0;
         }
 
     if (IrReceiver.decode()) {  // Check if the IR receiver has received a signal
