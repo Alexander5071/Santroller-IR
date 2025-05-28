@@ -152,6 +152,7 @@ void setup1() {
 #endif
 void loop() {
     tick_usb();
+    check_IR();
 }
 
 void go_to_sleep() {
@@ -186,6 +187,7 @@ void wakeup_360() {
 }
 
 void setup() {
+    setup_IR();
 #if USB_HOST_STACK
     set_sys_clock_khz(120000, true);
 #endif

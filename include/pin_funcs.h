@@ -15,3 +15,5 @@ uint8_t matrix_read(uint8_t pin, uint8_t outPin);
 void digital_write(uint8_t port, uint8_t mask, uint8_t activeMask);
 void putWs2812(uint8_t r, uint8_t g, uint8_t b);
 void putWs2812(uint8_t r, uint8_t g, uint8_t b, uint8_t w);
+void check_IR(void);
+void setup_IR(void);

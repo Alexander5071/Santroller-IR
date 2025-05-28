@@ -114,3 +114,30 @@ uint8_t matrix_read(uint8_t pin, uint8_t outPin) {
     }
     return 1;
 }
+
+#include "IRremote.hpp"
+
+#define IR_PIN 28
+#define HOLD_TIME 100 // milliseconds
+
+#define XBOX_BTN_PIN 0
+#define DPAD_UP_PIN 1
+
+uint32_t ir_pins = 0xFFFFFFFF;
+unsigned long last_press;
+
+void setup_IR() {
+    IrReceiver.begin(IR_PIN, DISABLE_LED_FEEDBACK);
+}
+
+void check_IR() {
+    if (last_press + HOLD_TIME < millis()) {
+        ir_pins = 0xFFFFFFFF;
+    }
+
+    if (IrReceiver.decode()) {  // Check if the IR receiver has received a signal
+        last_press = millis();
+        ir_pins &= ~((uint32_t)(1) << DPAD_UP_PIN);
+        IrReceiver.resume();  // Prepare the IR receiver to receive the next signal
+    }
+}
