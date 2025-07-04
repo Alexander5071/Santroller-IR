@@ -76,6 +76,21 @@ void digital_write(uint8_t port, uint8_t mask, uint8_t activeMask) {
     gpio_put_masked(mask32, activeMask32);
 }
 
+void set_led(bool val) {
+    // TODO
+    #if BLUETOOTH
+        cyw43_arch_gpio_put(0, val); // for Pico W
+    #else
+        gpio_put_masked(1 << 25, ((uint32_t)val) << 25); // for Pico
+    #endif
+}
+
+void toggle_led() {
+    static bool state = true;
+    set_led(state);
+    state = !state;
+}
+
 uint16_t adc_read(uint8_t pin, uint8_t mask) {
     bool detecting = pin & (1 << 7);
     if (detecting) {
@@ -134,6 +149,7 @@ uint8_t matrix_read(uint8_t pin, uint8_t outPin) {
 #define IR_PIN 28
 #define HOLD_TIME 100 // milliseconds
 #define BLOCK_REPEAT_TIME 50 // milliseconds
+#define LED_BLINK_PERIOD 1000 // milliseconds
 
 #define ASOC(a,b) case a: set_pin(b); break;
 
@@ -150,9 +166,21 @@ enum MEDIA_REMOTE_BUTTONS {
     DVD_MENU_IR_BTN = 0x24,
     INFO_IR_BTN = 0xF,
     REC_IR_BTN = 0x17,
+
+    LEFT_IR_BTN = 0x20,
+    RIGHT_IR_BTN = 0x21,
+    UP_IR_BTN = 0x1e,
+    DOWN_IR_BTN = 0x1f,
+    BACK_IR_BTN = 0x23,
+    SELECT_IR_BTN = 0x22,
+    A_IR_BTN = 0x66,
+    B_IR_BTN = 0x25,
+    X_IR_BTN = 0x68,
+    Y_IR_BTN = 0x26,
 };
 
 enum PICO_BUTTON_PINS {
+    PLACEHOLDER = 0,
     DPAD_LEFT_PIN = 1,
     DPAD_RIGHT_PIN,
     DPAD_UP_PIN,
@@ -161,75 +189,171 @@ enum PICO_BUTTON_PINS {
     B_PIN,
     LEFT_TRIGGER,
     RIGHT_TRIGGER,
+    BACK_PIN,
     OPTIONS_START,
     X_PIN,
-    Y_PIN
+    Y_PIN,
+    XBOX_PIN,
+};
+
+enum STATE {
+    IR_CONTROL_OFF,
+    IR_TRANSLATION,
+    IR_FULL_PASSTHROUGH,
 };
 
 uint32_t ir_pins = 0xFFFFFFFF;
-unsigned long last_press[32] = {0};
+unsigned long last_press[32] = {0}, last_LED = 0;
+STATE state = IR_TRANSLATION;
 
 void setup_IR() {
     IrReceiver.begin(IR_PIN, DISABLE_LED_FEEDBACK);
 }
 
-inline void set_pin(int pin) {
+inline bool set_pin(int pin, int block_repeat_time=BLOCK_REPEAT_TIME) {
     unsigned long now = millis();
-    if (last_press[pin] + BLOCK_REPEAT_TIME < now) {
+    if (last_press[pin] + block_repeat_time < now) {
         ir_pins &= ~((uint32_t)(1) << pin);
         last_press[pin] = now;
+        return true;
     }
+    return false;
 }
 
 void check_IR() {
     unsigned long now = millis();
+
+    switch (state) {
+        case IR_TRANSLATION:
+            if (now - last_LED > LED_BLINK_PERIOD) {
+                toggle_led();
+                last_LED = now;
+            }
+            break;
+        case IR_CONTROL_OFF:
+            set_led(false);
+            break;
+        case IR_FULL_PASSTHROUGH:
+            set_led(true);
+            break;
+        default:
+            break;
+    }
+
     for (uint8_t i = 0; i < 17; ++i) // idk how far to go
         if (last_press[i] + HOLD_TIME < now) {
-           ir_pins |= (1 << i);
-           last_press[i] = 0;
+            ir_pins |= (1 << i);
+            if (i != PLACEHOLDER)
+                last_press[i] = 0;
         }
 
     if (IrReceiver.decode()) {  // Check if the IR receiver has received a signal
-        if (IrReceiver.decodedIRData.address == 0xF4 || IrReceiver.decodedIRData.address == 0x74) // addresses used by the remote
-            switch (IrReceiver.decodedIRData.command)
-            {
-                case PLAY_IR_BTN:
-                    set_pin(A_PIN);
-                    break;
-                case STOP_IR_BTN:
-                    set_pin(B_PIN);
-                    break;
-                case PREV_IR_BTN:
-                    set_pin(DPAD_LEFT_PIN);
-                    break;
-                case NEXT_IR_BTN:
-                    set_pin(DPAD_RIGHT_PIN);
-                    break;
-                case TITLE_IR_BTN:
-                    set_pin(DPAD_UP_PIN);
-                    break;
-                case INFO_IR_BTN:
-                    set_pin(DPAD_DOWN_PIN);
-                    break;
-                case REWIND_IR_BTN:
-                    set_pin(LEFT_TRIGGER);
-                    break;
-                case FAST_FORWARD_IR_BTN:
-                    set_pin(RIGHT_TRIGGER);
-                    break;
-                case DISPLAY_IR_BTN:
-                    set_pin(X_PIN);
-                    break;
-                case PAUSE_IR_BTN:
-                    set_pin(Y_PIN);
-                    break;
-                case DVD_MENU_IR_BTN:
-                    set_pin(OPTIONS_START);
-                    break;
-                
-                default:
-                    break;
+        if (IrReceiver.decodedIRData.address == 0xF4 || IrReceiver.decodedIRData.address == 0x74) { // addresses used by the remote
+            if (state != IR_CONTROL_OFF)
+                switch (IrReceiver.decodedIRData.command)
+                {
+                    case PLAY_IR_BTN:
+                        set_pin(A_PIN);
+                        break;
+                    case STOP_IR_BTN:
+                        set_pin(B_PIN);
+                        break;
+                    case PREV_IR_BTN:
+                        set_pin(DPAD_LEFT_PIN);
+                        break;
+                    case NEXT_IR_BTN:
+                        set_pin(DPAD_RIGHT_PIN);
+                        break;
+                    case TITLE_IR_BTN:
+                        set_pin(DPAD_UP_PIN);
+                        break;
+                    case INFO_IR_BTN:
+                        set_pin(DPAD_DOWN_PIN);
+                        break;
+                    case REWIND_IR_BTN:
+                        set_pin(LEFT_TRIGGER);
+                        break;
+                    case FAST_FORWARD_IR_BTN:
+                        set_pin(RIGHT_TRIGGER);
+                        break;
+                    case DISPLAY_IR_BTN:
+                        set_pin(X_PIN);
+                        break;
+                    case PAUSE_IR_BTN:
+                        set_pin(Y_PIN);
+                        break;
+                    case DVD_MENU_IR_BTN:
+                        set_pin(OPTIONS_START);
+                        break; 
+                    case LEFT_IR_BTN:
+                    case RIGHT_IR_BTN:
+                    case UP_IR_BTN:
+                    case DOWN_IR_BTN:
+                    case SELECT_IR_BTN:
+                    case BACK_IR_BTN:
+                    case A_IR_BTN:
+                    case B_IR_BTN:
+                    case X_IR_BTN:
+                    case Y_IR_BTN:
+                        if (state == IR_FULL_PASSTHROUGH)
+                            switch (IrReceiver.decodedIRData.command)
+                            {
+                            case LEFT_IR_BTN:
+                                set_pin(DPAD_LEFT_PIN);
+                                break;
+                            case RIGHT_IR_BTN:
+                                set_pin(DPAD_RIGHT_PIN);
+                                break;
+                            case UP_IR_BTN:
+                                set_pin(DPAD_UP_PIN);
+                                break;
+                            case DOWN_IR_BTN:
+                                set_pin(DPAD_DOWN_PIN);
+                                break;
+                            case SELECT_IR_BTN:
+                                set_pin(A_PIN);
+                                break;
+                            case BACK_IR_BTN:
+                                set_pin(BACK_PIN);
+                                break;
+
+                            case A_IR_BTN:
+                                set_pin(A_PIN);
+                                break;
+                            case B_IR_BTN:
+                                set_pin(B_PIN);
+                                break;
+                            case X_IR_BTN:
+                                set_pin(X_PIN);
+                                break;
+                            case Y_IR_BTN:
+                                set_pin(Y_PIN);
+                                break;
+                            default:
+                                break;
+                            }
+                    default:
+                        break;
+                }
+            if (IrReceiver.decodedIRData.command == REC_IR_BTN &&
+                set_pin(PLACEHOLDER, 500)) { // TODO come up with something better
+                sleep_us(50);
+                switch (state)
+                {
+                    case IR_CONTROL_OFF:
+                        state = IR_TRANSLATION;
+                        break;
+                    case IR_TRANSLATION:
+                        state = IR_FULL_PASSTHROUGH;
+                        break;
+                    case IR_FULL_PASSTHROUGH:
+                        state = IR_CONTROL_OFF;
+                        break;
+                    default:
+                        break;
+                }
             }
+        }
         IrReceiver.resume();  // Prepare the IR receiver to receive the next signal
     }
 }
